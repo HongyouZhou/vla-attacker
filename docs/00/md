@@ -1,0 +1,18 @@
+## VLA Attacker
+
+这是一个针对 Vision-Language-Action (VLA) 模型的攻击项目。旨在研究 VLA 模型的安全性与鲁棒性。
+
+### 攻击的模型
+ - OpenVLA
+ - OpenPI ?
+ - Gemini Robotics?
+
+### 实现细节以及约束
+ - finetune(lora) VLA 不现实
+ - 采用离线攻击
+ - PGD
+ - RL
+
+### 相关论文
+ - https://arxiv.org/pdf/2311.02198 (IL + RL)
+ - https://arxiv.org/pdf/1703.02702 (Adversarial RL)
