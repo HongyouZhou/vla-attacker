@@ -1,35 +1,54 @@
 # Segmentation Module for VLA-Attacker
 
-This module uses SAM2 (Segment Anything Model 2) to segment objects in LIBERO dataset images, preparing them for adversarial attacks.
+This module uses **SAM3** (Segment Anything Model 3) to segment objects in LIBERO dataset images using **text prompts**, preparing them for adversarial attacks.
+
+## Key Features
+
+- **SAM3 Text Prompt Segmentation**: Segment objects by describing them (e.g., "robot gripper", "wooden block")
+- **Video Tracking**: Track segmented objects across video frames
+- **Backwards Compatible**: Also supports SAM2 automatic segmentation
 
 ## Setup
 
-### 1. Install SAM2
+### 1. Install SAM3 (Recommended)
+
+**Prerequisites:**
+
+- Python 3.12+
+- PyTorch 2.7+
+- CUDA 12.6+
 
 ```bash
-# Install SAM2 from Facebook Research
-pip install git+https://github.com/facebookresearch/sam2.git
+# Create a new conda environment
+conda create -n sam3 python=3.12
+conda activate sam3
 
-# Or if you have issues, clone and install manually:
-git clone https://github.com/facebookresearch/sam2.git
-cd sam2
+# Install PyTorch with CUDA
+pip install torch==2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+
+# Clone and install SAM3
+git clone https://github.com/facebookresearch/sam3.git
+cd sam3
 pip install -e .
+
+# Authenticate with Hugging Face (required for model download)
+# Request access at: https://huggingface.co/facebook/sam3
+pip install huggingface_hub
+huggingface-cli login
 ```
 
-### 2. Download SAM2 Checkpoints
+### 2. (Alternative) Install SAM2
+
+If you can't use SAM3 (e.g., older Python/PyTorch version), you can use SAM2:
 
 ```bash
-# Create checkpoint directory
-mkdir -p checkpoints/sam2
+# Install SAM2
+pip install git+https://github.com/facebookresearch/sam2.git
 
-# Download the tiny model (recommended for AMD integrated GPU)
+# Download checkpoints
+mkdir -p checkpoints/sam2
 cd checkpoints/sam2
 wget https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_tiny.pt
-
-# For better GPU, you can also download:
-# wget https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_small.pt
-# wget https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_base_plus.pt
-# wget https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt
 ```
 
 ### 3. Download LIBERO Dataset
@@ -41,33 +60,72 @@ python benchmark_scripts/download_libero_datasets.py
 
 ## Usage
 
-### Quick Test (AMD Integrated GPU)
+### SAM3 Text Prompt Segmentation (Recommended)
 
 ```bash
-# Test with a single demo using lightweight settings
-python scripts/segment_dataset.py --test --device cuda
-```
+# Test with specific text prompts
+python scripts/segment_dataset.py --test --prompts "robot gripper" "wooden block"
 
-### Process Specific Task Suite
+# Process a task suite with custom prompts
+python scripts/segment_dataset.py --suite libero_spatial \
+    --prompts "robot arm" "target object" "bowl"
 
-```bash
-python scripts/segment_dataset.py --suite libero_spatial
-```
-
-### Process All Data
-
-```bash
+# Process all data with default prompts
 python scripts/segment_dataset.py --all
 ```
 
-### Visualize Results
+### SAM2 Automatic Segmentation
 
 ```bash
-# Generate video for a specific demo
-python scripts/visualize_masks.py --suite libero_spatial --demo 0 --video
+# Use SAM2 automatic mask generation
+python scripts/segment_dataset.py --test --model sam2.1_hiera_tiny
 
-# Automatically visualize a processed demo
-python scripts/visualize_masks.py --auto --video
+# Process with SAM2
+python scripts/segment_dataset.py --suite libero_spatial --model sam2.1_hiera_tiny
+```
+
+### Python API
+
+```python
+from segmentation import SegmentationConfig, LiberoDataLoader, SAMSegmenter, MaskStorage
+
+# Initialize with SAM3
+segmenter = SAMSegmenter(model_name="sam3", device="cuda")
+
+# Load an image
+import numpy as np
+from PIL import Image
+image = np.array(Image.open("path/to/image.jpg"))
+
+# Segment with text prompts
+result = segmenter.segment_frame_with_text(
+    image=image,
+    text_prompts=["robot gripper", "wooden block", "bowl"],
+    frame_idx=0,
+)
+
+# Access results
+print(f"Found {len(result.masks)} objects")
+for i, (mask, prompt) in enumerate(zip(result.masks, result.prompts)):
+    print(f"  Object {i}: '{prompt}' - area: {mask.sum()} pixels")
+```
+
+### Video Segmentation with Tracking
+
+```python
+# Load video frames (T, H, W, 3)
+frames = loader.load_all_frames(demo_info, view="agentview_rgb")
+
+# Segment and track through video
+results = segmenter.segment_video_with_text(
+    frames=frames,
+    text_prompts=["robot gripper", "target object"],
+    init_frame_idx=0,
+)
+
+# Results is a dict: {frame_idx: SegmentationResult}
+for frame_idx, result in results.items():
+    print(f"Frame {frame_idx}: {len(result.masks)} objects tracked")
 ```
 
 ## Output Format
@@ -110,13 +168,43 @@ Each `*_masks.hdf5` file contains:
       "objects": {
         "0": {"first_frame": 0, "last_frame": 299, "avg_area": 1234},
         ...
+      },
+      "segmentation_config": {
+        "sam_model_name": "sam3",
+        "text_prompts": ["robot gripper", "wooden block"]
       }
     }
   }
 }
 ```
 
-## API Usage
+## Configuration Options
+
+See `segmentation/config.py` for all options:
+
+### SAM3 Options
+
+- `text_prompts`: List of text descriptions for objects to segment
+- `task_prompts`: Task-specific prompt overrides
+
+### SAM2 Options (if not using SAM3)
+
+- `sam_model_name`: Model variant (tiny/small/base_plus/large)
+- `points_per_side`: Grid density for automatic segmentation
+- `enable_tracking`: Use video tracking for consistent IDs
+
+## Text Prompt Tips for LIBERO
+
+Good text prompts for LIBERO scenes:
+
+- **Robot parts**: "robot gripper", "robot arm", "robot end effector"
+- **Objects**: "wooden block", "red cube", "blue cube", "bowl", "mug", "plate"
+- **Furniture**: "drawer", "cabinet door", "shelf"
+- **Targets**: "target location", "goal area"
+
+Be specific! "red wooden block" works better than just "block".
+
+## API for Attacks
 
 ```python
 from segmentation import SegmentationConfig, LiberoDataLoader, MaskStorage
@@ -140,14 +228,5 @@ mask = storage.get_object_mask_at_frame(
 )
 
 # mask is a boolean array of shape (H, W)
-# Use this for your attack!
+# Use this for your adversarial attack!
 ```
-
-## Configuration Options
-
-See `segmentation/config.py` for all options:
-
-- `sam_model_name`: Model variant (tiny/small/base_plus/large)
-- `points_per_side`: Grid density for automatic segmentation
-- `enable_tracking`: Use video tracking for consistent IDs
-- And more...
